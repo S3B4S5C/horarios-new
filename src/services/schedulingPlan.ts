@@ -20,33 +20,34 @@ export type GrupoPlanRow = {
 export type ClaseDetail = {
   id: number;
   grupo: number;
-  tipo: 'T'|'P';
-  day_of_week: 1|2|3|4|5|6|7;
+  tipo: 'T' | 'P';
+  day_of_week: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   bloque_inicio: number; // id de bloque
   bloques_duracion: number;
   ambiente: number;
   docente?: number | null;
-  estado: 'propuesto'|'confirmado'|'cancelado';
+  estado: 'propuesto' | 'confirmado' | 'cancelado';
   labels?: {
     asignatura: string;
-    grupo: string|null;
+    grupo: string | null;
     docente: string;
-    ambiente: string|null;
+    ambiente: string | null;
     bloque_inicio_orden: number;
     rango_hora: string;
   };
 };
 
-export async function listGruposPlanificacion(params?: {
-  periodo?: number|string;
-  asignatura?: number|string;
-  turno?: number|string;
-  tolerancia_min?: number;
-  calendario?: number;
-}) {
-  const { data } = await http.get('/api/academics/grupos/planificacion/', { params });
+export async function listGruposPlanificacion(
+  params?: { periodo?: number | string; asignatura?: number | string; turno?: number | string; tolerancia_min?: number; calendario?: number; },
+  opts?: { signal?: AbortSignal }
+) {
+  const { data } = await http.get('/api/academics/grupos/planificacion/', {
+    params,
+    signal: opts?.signal,
+  });
   return data as GrupoPlanRow[];
 }
+
 
 export async function listClasesDeGrupo(grupoId: number, expandLabels = true) {
   const { data } = await http.get(`/api/academics/grupos/${grupoId}/clases/`, {
@@ -55,7 +56,7 @@ export async function listClasesDeGrupo(grupoId: number, expandLabels = true) {
   return data as ClaseDetail[];
 }
 
-export async function bulkCreateClases(items: Omit<ClaseDetail,'id'|'labels'>[]) {
+export async function bulkCreateClases(items: Omit<ClaseDetail, 'id' | 'labels'>[]) {
   const { data } = await http.post('/api/academics/clases/bulk-create/', { items });
   return data as { created: number; items: ClaseDetail[]; conflicts: any[] };
 }
