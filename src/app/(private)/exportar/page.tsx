@@ -1,19 +1,24 @@
-"use client";
+'use client';
+
 import React, { useEffect, useMemo, useState } from "react";
 import { exportHorarioPDF, gridSemana, GridResponse } from "@/services/export";
 import { listCalendarios } from "@/services/scheduling";
 import { listDocentes } from "@/services/users";
 import { listGrupos } from "@/services/academics";
 import { listAmbientes } from "@/services/facilities";
+import { useAuth } from "@/context/AuthContext";
 import { Grupo } from "@/types";
 
 type O = { id: number; [k: string]: any };
 
 function dowLabel(d: number) {
-  return {1:"Lunes",2:"Martes",3:"Miércoles",4:"Jueves",5:"Viernes",6:"Sábado",7:"Domingo"}[d] || d;
+  return ({1:"Lunes",2:"Martes",3:"Miércoles",4:"Jueves",5:"Viernes",6:"Sábado",7:"Domingo"} as any)[d] || d;
 }
 
 export default function ExportacionHorarioPDF() {
+  const { role, user } = useAuth();
+  const isDocente = role === "DOCENTE";
+
   const [calendario, setCalendario] = useState<number | null>(null);
   const [periodo, setPeriodo] = useState<number | null>(null);
 
@@ -30,6 +35,7 @@ export default function ExportacionHorarioPDF() {
   const [loadingPrev, setLoadingPrev] = useState(false);
   const [loadingPDF, setLoadingPDF] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [meDocenteMissing, setMeDocenteMissing] = useState(false);
 
   const selectedCal = useMemo(
     () => cals.find((c) => c.id === calendario),
@@ -42,12 +48,38 @@ export default function ExportacionHorarioPDF() {
 
   // Cargar catálogos
   useEffect(() => {
-    listCalendarios().then(setCals);
-    listDocentes().then(setDocentes);
-    listAmbientes().then(setAmbientes);
-    // grupos: puedes filtrar en UI por periodo una vez seleccionado
-    listGrupos({}).then(setGrupos);
-  }, []);
+    (async () => {
+      try {
+        const [calsResp, docsResp, ambResp, gruposResp] = await Promise.all([
+          listCalendarios(),
+          listDocentes(),
+          listAmbientes(),
+          listGrupos({}), // luego filtramos por período
+        ]);
+
+        setCals(calsResp);
+        setAmbientes(ambResp);
+        setGrupos(gruposResp);
+
+        if (isDocente) {
+          // fijar a "mi" docente
+          const mine = (docsResp || []).find((d: any) => d.user === user?.id);
+          if (!mine) {
+            setMeDocenteMissing(true);
+            setDocentes([]);
+            setDocente(undefined);
+          } else {
+            setDocentes([mine]);       // solo yo en la lista
+            setDocente(mine.id);       // valor fijo para filtros/export
+          }
+        } else {
+          setDocentes(docsResp || []);
+        }
+      } catch (e: any) {
+        setError("No se pudieron cargar los catálogos.");
+      }
+    })();
+  }, [isDocente, user?.id]);
 
   const gruposPeriodo = useMemo(() => {
     if (!periodo) return grupos;
@@ -64,7 +96,7 @@ export default function ExportacionHorarioPDF() {
       const data = await gridSemana({
         calendario,
         periodo,
-        docente,
+        docente,   // 👈 si es DOCENTE, ya está fijado a su id
         grupo,
         ambiente,
       });
@@ -141,15 +173,25 @@ export default function ExportacionHorarioPDF() {
     return rows;
   }, [preview]);
 
+  const docenteNombre = useMemo(() => {
+    if (!docente) return "";
+    const d = docentes.find((x) => x.id === docente);
+    return (d as any)?.nombre_completo ?? `Docente #${docente}`;
+  }, [docente, docentes]);
+
+  const buttonsDisabled =
+    !calendario || !periodo || loadingPrev || loadingPDF || (isDocente && meDocenteMissing);
+
   return (
     <div className="card mb-4">
       <div className="card-body">
         <h2 className="card-title h5 mb-1">Exportación de horario (PDF)</h2>
         <p className="text-muted mb-3">
-          Genera un PDF en formato tabular <em>(día, bloque, asignatura, docente y aula)</em>. 
+          Genera un PDF en formato tabular <em>(día, bloque, asignatura, docente y aula)</em>.
           Aplica filtros antes de exportar.
         </p>
 
+        {/* Filtros */}
         <form className="row g-3 align-items-end" onSubmit={onPreview}>
           <div className="col-12 col-md-3">
             <label className="form-label">Calendario</label>
@@ -177,20 +219,32 @@ export default function ExportacionHorarioPDF() {
             />
           </div>
 
+          {/* Campo Docente con modo bloqueado para role DOCENTE */}
           <div className="col-12 col-md-3">
-            <label className="form-label">Docente (opcional)</label>
-            <select
-              className="form-select"
-              value={docente ?? ""}
-              onChange={(e) => setDocente(e.target.value ? Number(e.target.value) : undefined)}
-            >
-              <option value="">Todos</option>
-              {docentes.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.nombre_completo}
-                </option>
-              ))}
-            </select>
+            <label className="form-label">Docente {isDocente ? "(fijo)" : "(opcional)"}</label>
+            {isDocente ? (
+              <>
+                <input className="form-control" value={docenteNombre || "No vinculado"} readOnly disabled />
+                {meDocenteMissing && (
+                  <div className="form-text text-danger">
+                    Tu usuario no está vinculado a un registro de Docente. Contacta con administración.
+                  </div>
+                )}
+              </>
+            ) : (
+              <select
+                className="form-select"
+                value={docente ?? ""}
+                onChange={(e) => setDocente(e.target.value ? Number(e.target.value) : undefined)}
+              >
+                <option value="">Todos</option>
+                {docentes.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {(d as any).nombre_completo}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="col-12 col-md-2">
@@ -229,7 +283,7 @@ export default function ExportacionHorarioPDF() {
             <button
               className="btn btn-outline-secondary"
               onClick={onPreview}
-              disabled={!calendario || !periodo || loadingPrev}
+              disabled={buttonsDisabled}
               type="button"
             >
               {loadingPrev ? "Generando…" : "Vista previa"}
@@ -238,7 +292,7 @@ export default function ExportacionHorarioPDF() {
             <button
               className="btn btn-primary"
               onClick={onExport}
-              disabled={!calendario || !periodo || loadingPDF}
+              disabled={buttonsDisabled}
               type="button"
             >
               {loadingPDF ? "Exportando…" : "Exportar PDF"}
@@ -273,25 +327,53 @@ export default function ExportacionHorarioPDF() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tablaFilas.map((r, i) => (
-                    <tr key={i}>
-                      <td>{dowLabel(r.day)}</td>
-                      <td>{r.rango}</td>
-                      <td>{r.bloque}</td>
-                      <td>{r.asignatura}</td>
-                      <td>{r.docente}</td>
-                      <td>{r.ambiente}</td>
-                      <td>{r.grupo}</td>
-                      <td>{r.tipo}</td>
-                    </tr>
-                  ))}
-                  {tablaFilas.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="text-muted small">
-                        Sin resultados para los filtros.
-                      </td>
-                    </tr>
-                  )}
+                  {(() => {
+                    const filas: any[] = [];
+                    const byDay = new Map<number, any[]>();
+                    preview.celdas.forEach((c) => {
+                      const arr = byDay.get(c.day_of_week) || [];
+                      arr.push(c);
+                      byDay.set(c.day_of_week, arr);
+                    });
+                    const bloquesByOrden = new Map(preview.bloques.map((b) => [b.orden, b]));
+                    for (const [day, arr] of Array.from(byDay.entries()).sort((a, b) => a[0] - b[0])) {
+                      arr.sort((a, b) => a.bloque_inicio_orden - b.bloque_inicio_orden);
+                      arr.forEach((c) => {
+                        const bIni = bloquesByOrden.get(c.bloque_inicio_orden);
+                        const bFin = bloquesByOrden.get(c.bloque_inicio_orden + c.bloques_duracion - 1) || bIni;
+                        filas.push({
+                          day,
+                          rango: bIni && bFin ? `${bIni.hora_inicio.slice(0, 5)}–${bFin.hora_fin.slice(0, 5)}` : "—",
+                          bloque: `${c.bloque_inicio_orden} (${c.bloques_duracion})`,
+                          asignatura: c.asignatura,
+                          docente: c.docente,
+                          ambiente: c.ambiente || "—",
+                          grupo: c.grupo_codigo,
+                          tipo: c.tipo === "T" ? "Teoría" : "Práctica",
+                        });
+                      });
+                    }
+                    return filas.length
+                      ? filas.map((r, i) => (
+                          <tr key={i}>
+                            <td>{dowLabel(r.day)}</td>
+                            <td>{r.rango}</td>
+                            <td>{r.bloque}</td>
+                            <td>{r.asignatura}</td>
+                            <td>{r.docente}</td>
+                            <td>{r.ambiente}</td>
+                            <td>{r.grupo}</td>
+                            <td>{r.tipo}</td>
+                          </tr>
+                        ))
+                      : (
+                        <tr>
+                          <td colSpan={8} className="text-muted small">
+                            Sin resultados para los filtros.
+                          </td>
+                        </tr>
+                      );
+                  })()}
                 </tbody>
               </table>
             </div>
